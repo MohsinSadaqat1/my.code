@@ -1,0 +1,190 @@
+import tkinter as tk
+from tkinter import messagebox, Toplevel, ttk
+from tkcalendar import DateEntry
+from fpdf import FPDF
+import pandas as pd
+import os
+import re
+from datetime import datetime, timedelta
+
+os.makedirs("data", exist_ok=True)
+os.makedirs("letters", exist_ok=True)
+
+EMPLOYEE_FILE = "data/employees.csv"
+LEAVE_FILE = "data/leaves.csv"
+PERFORMANCE_FILE = "data/performance_reviews.csv"
+
+# PDF Generator
+def generate_welcome_letter(employee_data):
+    full_name = f"{employee_data['First Name']} {employee_data['Last Name']}"
+    emp_id = employee_data['Employee ID']
+    orientation = employee_data['Orientation Date']
+    department = employee_data['Department']
+    job_title = employee_data['Job Title']
+    created_on = datetime.now().strftime("%Y-%m-%d")
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Welcome to the Company!", ln=True, align='C')
+    pdf.ln(10)
+    body = (
+        f"Dear {full_name},\n\n"
+        f"We are thrilled to welcome you to the {department} department as our new {job_title}.\n"
+        f"Your Employee ID is: {emp_id}\n"
+        f"Your orientation is scheduled for: {orientation}\n\n"
+        f"We look forward to seeing you on your start date and working together to achieve great things.\n\n"
+        f"Best regards,\n"
+        f"Human Resources\n\n"
+        f"Letter Generated on: {created_on}"
+    )
+    pdf.set_font("Arial", size=11)
+    for line in body.split('\n'):
+        pdf.cell(200, 10, txt=line, ln=True)
+    pdf.output(f"letters/Welcome_{employee_data['First Name']}_{employee_data['Last Name']}.pdf")
+
+# Onboarding Module
+def open_onboarding_form():
+    form = Toplevel()
+    form.title("Employee Onboarding")
+    form.geometry("550x650")
+    fields = {
+        'First Name': tk.StringVar(),
+        'Last Name': tk.StringVar(),
+        'Phone Number': tk.StringVar(),
+        'Emergency Contact': tk.StringVar(),
+        'Department': tk.StringVar(),
+        'Job Title': tk.StringVar(),
+        'Email': tk.StringVar(),
+        'Confirm Email': tk.StringVar()
+    }
+    row = 0
+    for label, var in fields.items():
+        tk.Label(form, text=label).grid(row=row, column=0, padx=10, pady=5, sticky='w')
+        tk.Entry(form, textvariable=var, width=40).grid(row=row, column=1)
+        row += 1
+    tk.Label(form, text="Date of Birth").grid(row=row, column=0, padx=10, pady=5, sticky='w')
+    dob_picker = DateEntry(form, width=37, date_pattern='yyyy-mm-dd')
+    dob_picker.grid(row=row, column=1)
+    row += 1
+    tk.Label(form, text="Start Date").grid(row=row, column=0, padx=10, pady=5, sticky='w')
+    start_picker = DateEntry(form, width=37, date_pattern='yyyy-mm-dd')
+    start_picker.grid(row=row, column=1)
+    row += 1
+    tk.Label(form, text="Gender").grid(row=row, column=0, padx=10, pady=5, sticky='w')
+    gender_var = tk.StringVar(value="Male")
+    tk.Radiobutton(form, text="Male", variable=gender_var, value="Male").grid(row=row, column=1, sticky='w')
+    tk.Radiobutton(form, text="Female", variable=gender_var, value="Female").grid(row=row, column=1, padx=80, sticky='w')
+    row += 1
+    tk.Label(form, text="Employment Type").grid(row=row, column=0, padx=10, pady=5, sticky='w')
+    employment_var = tk.StringVar()
+    employment_dropdown = ttk.Combobox(form, textvariable=employment_var, width=37, state="readonly")
+    employment_dropdown['values'] = ("Full-time", "Intern", "Contract")
+    employment_dropdown.grid(row=row, column=1)
+    employment_dropdown.current(0)
+    row += 1
+    def validate_and_submit():
+        data = {k: v.get().strip() for k, v in fields.items()}
+        data['Gender'] = gender_var.get()
+        data['Employment Type'] = employment_var.get()
+        data['Date of Birth (YYYY-MM-DD)'] = dob_picker.get()
+        data['Start Date (YYYY-MM-DD)'] = start_picker.get()
+        errors = []
+        if data['Email'] != data['Confirm Email']:
+            errors.append("Emails do not match.")
+
+        if any(v == "" for v in data.values()):
+            errors.append("All fields must be filled.")
+        if errors:
+            messagebox.showerror("Validation Error", "\n".join(errors))
+            return
+        df = pd.read_csv(EMPLOYEE_FILE) if os.path.exists(EMPLOYEE_FILE) else pd.DataFrame()
+        emp_id = f"EMP{1001 + len(df)}"
+        orientation = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+        record = {'Employee ID': emp_id, **data, 'Orientation Date': orientation, 'Status': 'Complete', 'Created On': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
+        df.to_csv(EMPLOYEE_FILE, index=False)
+        generate_welcome_letter(record)
+        messagebox.showinfo("Success", f"{data['First Name']} onboarded!\nID: {emp_id}")
+        form.destroy()
+    tk.Button(form, text="Submit", command=validate_and_submit, bg="#4CAF50", fg="white", width=25).grid(row=row, column=1, pady=20)
+
+# Leave Request Form with Calendar
+
+def open_leave_form():
+    if not os.path.exists(EMPLOYEE_FILE):
+        messagebox.showerror("Error", "No employees found. Please onboard employees first.")
+        return
+    emp_df = pd.read_csv(EMPLOYEE_FILE)
+    emp_options = [f"{row['Employee ID']} - {row['First Name']} {row['Last Name']}" for _, row in emp_df.iterrows()]
+    form = Toplevel()
+    form.title("Leave Request Form")
+    form.geometry("450x400")
+    emp_selected = tk.StringVar()
+    leave_type = tk.StringVar()
+    reason = tk.StringVar()
+    tk.Label(form, text="Select Employee").grid(row=0, column=0, padx=10, pady=5, sticky='w')
+    emp_dropdown = ttk.Combobox(form, textvariable=emp_selected, values=emp_options, state="readonly", width=35)
+    emp_dropdown.grid(row=0, column=1)
+    emp_dropdown.current(0)
+    tk.Label(form, text="Leave Type").grid(row=1, column=0, padx=10, pady=5, sticky='w')
+    tk.Entry(form, textvariable=leave_type, width=30).grid(row=1, column=1)
+    tk.Label(form, text="Start Date").grid(row=2, column=0, padx=10, pady=5, sticky='w')
+    start_date = DateEntry(form, width=30, date_pattern='yyyy-mm-dd')
+    start_date.grid(row=2, column=1)
+    tk.Label(form, text="End Date").grid(row=3, column=0, padx=10, pady=5, sticky='w')
+    end_date = DateEntry(form, width=30, date_pattern='yyyy-mm-dd')
+    end_date.grid(row=3, column=1)
+    tk.Label(form, text="Reason").grid(row=4, column=0, padx=10, pady=5, sticky='w')
+    tk.Entry(form, textvariable=reason, width=30).grid(row=4, column=1)
+    def submit_leave():
+        emp_val = emp_selected.get()
+        if not emp_val or '-' not in emp_val:
+            messagebox.showerror("Input Error", "Please select a valid employee.")
+            return
+        emp_id, emp_name = emp_val.split(" - ", 1)
+        leave_val = leave_type.get().strip()
+        reason_val = reason.get().strip()
+        start = start_date.get()
+        end = end_date.get()
+        if not all([leave_val, start, end, reason_val]):
+            messagebox.showerror("Error", "All fields must be filled.")
+            return
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d")
+            end_dt = datetime.strptime(end, "%Y-%m-%d")
+            if end_dt < start_dt:
+                raise ValueError("End date cannot be before start date.")
+        except Exception as e:
+            messagebox.showerror("Date Error", str(e))
+            return
+        days = (end_dt - start_dt).days + 1
+        approved = "Yes" if days <= 5 else "Pending Review"
+        record = {
+            'Employee ID': emp_id,
+            'Employee Name': emp_name,
+            'Leave Type': leave_val,
+            'Start Date': start,
+            'End Date': end,
+            'Days Requested': days,
+            'Reason': reason_val,
+            'Approved': approved,
+            'Submitted On': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        df = pd.read_csv(LEAVE_FILE) if os.path.exists(LEAVE_FILE) else pd.DataFrame()
+        df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
+        df.to_csv(LEAVE_FILE, index=False)
+        messagebox.showinfo("Leave Submitted", f"{emp_name}'s leave submitted.\nStatus: {approved}")
+        form.destroy()
+    tk.Button(form, text="Submit Leave Request", command=submit_leave, bg="#2196F3", fg="white").grid(row=6, column=1, pady=20)
+
+# Main GUI
+root = tk.Tk()
+root.title("HR Automation System")
+root.geometry("400x400")
+tk.Label(root, text="Select an HR Module", font=("Arial", 14)).pack(pady=20)
+tk.Button(root, text="Employee Onboarding", command=open_onboarding_form, width=30, bg="#4CAF50", fg="white").pack(pady=10)
+tk.Button(root, text="Leave Request Form", command=open_leave_form, width=30, bg="#2196F3", fg="white").pack(pady=10)
+
+
+
+root.mainloop()
